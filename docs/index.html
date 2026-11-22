@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Relay Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+html, body { margin: 0; }
+/* Layout: one wide diagram board on top, steps + status log side by side below. Flat system-chart look. */
+:root {
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --ink: #17212b;
+  --muted: #5d6a78;
+  --line: #c3ccd6;
+  --grid: #e7ecf1;
+  --focus: #2f6fdb;
+  --pending: #b97f08;
+  --running: #2f6fdb;
+  --approval: #d9601a;
+  --done: #1d9457;
+  --error: #d23f3f;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --panel: #141b22; --ink: #e2e8ee; --muted: #8b98a6; --line: #34424f; --grid: #1a232c;
+    --focus: #6aa3ff; --pending: #f0b13a; --running: #5b9bff; --approval: #ff8a3d; --done: #3ccf7a; --error: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --panel: #141b22; --ink: #e2e8ee; --muted: #8b98a6; --line: #34424f; --grid: #1a232c;
+  --focus: #6aa3ff; --pending: #f0b13a; --running: #5b9bff; --approval: #ff8a3d; --done: #3ccf7a; --error: #ff6b6b;
+  color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 48px;
+  display: grid; gap: 24px;
+}
+header { display: grid; gap: 6px; }
+.eyebrow { margin: 0; font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; color: var(--muted); }
+h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.01em; text-wrap: balance; }
+.lede { margin: 0; max-width: 66ch; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: .9em; color: var(--ink); }
+
+.board { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: grid; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.toolbar button {
+  font: 500 13px var(--font-body); color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+.toolbar button:hover { border-color: var(--muted); }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.clock { margin-left: auto; font-family: var(--font-mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.diagram-scroll { overflow-x: auto; }
+svg#dia { display: block; width: 100%; min-width: 720px; height: auto; }
+.caption { margin: 0; padding: 12px 16px 16px; border-top: 1px solid var(--line); min-height: 3.2em; }
+
+/* SVG styling through tokens */
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.node { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; transition: stroke .6s ease; }
+.node.busy { stroke: var(--running); }
+.node.stopped { stroke-dasharray: 4 4; }
+.t-title { fill: var(--ink); font: 600 14px var(--font-mono); letter-spacing: .08em; }
+.t-sub { fill: var(--muted); font: 400 12px var(--font-body); }
+.t-mono { fill: var(--ink); font: 400 12px var(--font-mono); }
+.t-mono-muted { fill: var(--muted); font: 400 11px var(--font-mono); }
+.wire { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.wire.ret { stroke-dasharray: 5 5; }
+.arrow { fill: var(--line); }
+.row { fill: var(--bg); stroke: var(--line); stroke-width: 1; }
+.pill { stroke: none; transition: fill .6s ease; transform-box: fill-box; transform-origin: center; }
+.rowg { transition: opacity .7s ease, transform .7s ease; }
+.rowg.hidden { opacity: 0; transform: translateX(-14px); }
+.row { transition: stroke .9s ease, stroke-width .9s ease; }
+.rowg.hot .row { stroke-width: 2.5; }
+.rowg.hot.h-PENDING .row { stroke: var(--pending); } .rowg.hot.h-RUNNING .row { stroke: var(--running); }
+.rowg.hot.h-AWAITING .row { stroke: var(--approval); } .rowg.hot.h-DONE .row { stroke: var(--done); }
+.rowg.hot.h-ERROR .row { stroke: var(--error); }
+.rowg.hot .pill { animation: pop .55s ease; }
+@keyframes pop { 40% { transform: scale(1.14); } }
+.pill-text, .t-mono, .t-mono-muted { transition: opacity .4s ease; }
+#A-dot, #B-dot, #watch-dot { transition: fill .6s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .pill, .rowg, .row, .node, #A-dot, #B-dot, #watch-dot { transition: none; }
+  .rowg.hot .pill { animation: none; }
+  .rowg.hidden { transform: none; }
+}
+.pill-text { font: 600 10px var(--font-mono); letter-spacing: .04em; fill: var(--panel); }
+.s-PENDING { fill: var(--pending); } .s-RUNNING { fill: var(--running); } .s-AWAITING { fill: var(--approval); }
+.s-DONE { fill: var(--done); } .s-ERROR { fill: var(--error); } .s-IDLE { fill: var(--muted); } .s-STOP { fill: var(--line); }
+.packet { stroke: var(--panel); stroke-width: 2; }
+.stopchip { fill: var(--error); }
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+.below { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 760px) { .below { grid-template-columns: minmax(0, 1fr); } }
+h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+ol.steps button {
+  width: 100%; text-align: left; display: grid; grid-template-columns: 2.2em minmax(0, 1fr); gap: 8px;
+  font: 400 14px/1.45 var(--font-body); color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; cursor: pointer;
+}
+ol.steps button:hover { border-color: var(--line); }
+ol.steps button[aria-current="step"] { color: var(--ink); background: var(--panel); border-color: var(--line); }
+ol.steps .n { font-family: var(--font-mono); font-size: 12px; padding-top: 2px; }
+.log { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.log pre {
+  margin: 0; font: 400 12px/1.7 var(--font-mono); color: var(--ink); white-space: pre; overflow-x: auto;
+  min-height: 14em; font-variant-numeric: tabular-nums;
+}
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 400 12px var(--font-mono); color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <p class="eyebrow">agent-relay · one run, end to end</p>
+    <h1>Agent Relay</h1>
+    <p class="lede">Claude Code (the master) hands tasks to Copilot workers through plain files in <code>.agent-relay/</code>. Each task is a folder with <code>task.md</code>, a one-word <code>status</code> and, at the end, <code>result.md</code>. This replays the two-worker test run.</p>
+  </header>
+
+  <section class="board" aria-label="Animated flow diagram">
+    <div class="toolbar">
+      <button id="play" type="button">Pause</button>
+      <button id="restart" type="button">Restart</button>
+      <button id="speed" type="button">Speed 1×</button>
+      <span class="clock" id="clock">t+00.0s</span>
+    </div>
+    <div class="diagram-scroll">
+      <svg id="dia" viewBox="0 0 960 430" role="img" aria-labelledby="dia-title">
+        <title id="dia-title">Master on the left writes tasks into the .agent-relay queue in the middle; two workers on the right claim tasks and send results back along dashed return lines.</title>
+        <defs>
+          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+            <path d="M24 0H0V24" class="gridline" fill="none"/>
+          </pattern>
+          <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M0 0L8 4L0 8z" class="arrow"/>
+          </marker>
+        </defs>
+        <rect width="960" height="430" fill="url(#grid)"/>
+
+        <!-- wires -->
+        <path id="p-mq" class="wire" d="M240 210 H326" marker-end="url(#arr)"/>
+        <path id="p-qA" class="wire" d="M630 125 H716" marker-end="url(#arr)"/>
+        <path id="p-qB" class="wire" d="M630 295 H716" marker-end="url(#arr)"/>
+        <path id="p-rA" class="wire ret" d="M820 70 V22 H140 V146" marker-end="url(#arr)"/>
+        <path id="p-rB" class="wire ret" d="M820 350 V404 H140 V274" marker-end="url(#arr)"/>
+        <text x="480" y="16" text-anchor="middle" class="t-mono-muted">result.md → DONE / ERROR</text>
+        <text x="480" y="422" text-anchor="middle" class="t-mono-muted">result.md → DONE / ERROR</text>
+        <text x="283" y="200" text-anchor="middle" class="t-mono-muted">init</text>
+        <text x="673" y="115" text-anchor="middle" class="t-mono-muted">claim</text>
+        <text x="673" y="285" text-anchor="middle" class="t-mono-muted">claim</text>
+
+        <!-- master -->
+        <rect id="n-master" class="node" x="40" y="150" width="200" height="120" rx="8"/>
+        <text x="60" y="178" class="t-title">MASTER</text>
+        <text x="60" y="197" class="t-sub">Claude Code</text>
+        <circle id="watch-dot" cx="64" cy="225" r="4" class="s-IDLE"/>
+        <text id="watch-txt" x="76" y="229" class="t-mono">relay-watch.sh</text>
+        <text id="res-txt" x="60" y="254" class="t-mono-muted">results read: 0</text>
+
+        <!-- queue -->
+        <rect class="node" x="330" y="40" width="300" height="340" rx="8"/>
+        <text x="350" y="68" class="t-title">.agent-relay/</text>
+        <line x1="346" y1="80" x2="614" y2="80" class="wire"/>
+        <g id="stop-chip" visibility="hidden">
+          <rect x="566" y="54" width="48" height="20" rx="4" class="stopchip"/>
+          <text x="590" y="68" text-anchor="middle" class="pill-text">.stop</text>
+        </g>
+        <g id="rows"></g>
+
+        <!-- workers -->
+        <rect id="n-A" class="node" x="720" y="70" width="200" height="110" rx="8"/>
+        <text x="740" y="98" class="t-title">WORKER A</text>
+        <text x="740" y="117" class="t-sub">Copilot chat</text>
+        <circle id="A-dot" cx="744" cy="149" r="4" class="s-IDLE"/>
+        <text id="A-txt" x="756" y="153" class="t-mono">listening</text>
+
+        <rect id="n-B" class="node" x="720" y="240" width="200" height="110" rx="8"/>
+        <text x="740" y="268" class="t-title">WORKER B</text>
+        <text x="740" y="287" class="t-sub">Copilot chat</text>
+        <circle id="B-dot" cx="744" cy="319" r="4" class="s-IDLE"/>
+        <text id="B-txt" x="756" y="323" class="t-mono">listening</text>
+
+        <g id="packets"></g>
+      </svg>
+    </div>
+    <p class="caption" id="caption" aria-live="polite"></p>
+  </section>
+
+  <div class="legend" aria-label="Status colors">
+    <span><i class="lg" style="background:var(--pending)"></i>PENDING</span>
+    <span><i class="lg" style="background:var(--running)"></i>RUNNING</span>
+    <span><i class="lg" style="background:var(--approval)"></i>AWAITING_APPROVAL</span>
+    <span><i class="lg" style="background:var(--done)"></i>DONE</span>
+    <span><i class="lg" style="background:var(--error)"></i>ERROR</span>
+  </div>
+
+  <section class="below">
+    <div>
+      <h2>Steps</h2>
+      <ol class="steps" id="steps"></ol>
+    </div>
+    <div class="log">
+      <h2>Status log</h2>
+      <pre id="log"></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $ = (id) => document.getElementById(id);
+
+  const STEPS = [
+    { t: 0.3,  text: "Master runs relay-init.sh for each task: task.md is written, then status = PENDING." },
+    { t: 2.6,  text: "Each listening worker claims the oldest PENDING task. A lock makes sure only one worker gets it." },
+    { t: 4.0,  text: "Before running a command, the worker announces it (AWAITING_APPROVAL), so the master can see a permission prompt." },
+    { t: 7.0,  text: "The worker writes result.md and flips status to DONE. The master's background watcher wakes up and reads it." },
+    { t: 8.0,  text: "Freed workers go straight back to the queue. Two workers share one queue; no task runs twice." },
+    { t: 11.2, text: "A task that can't be done comes back as ERROR with a reason, never a guessed answer." },
+    { t: 14.0, text: "The master drops a .stop file and every worker exits its loop." },
+  ];
+  const SLOW = 1.7;                     // stretches the whole run (~30 s per loop)
+  STEPS.forEach((s) => { s.t *= SLOW; });
+  const END = 18 * SLOW;
+  const HOT = 0.9 * SLOW;               // how long a row stays highlighted after a change
+
+  const TASKS = ["p-reverse", "p-words", "p-list", "p-write", "missing-1"];
+  const ROW_Y = (i) => 92 + i * 56;
+
+  // ---- build rows
+  const rowsG = $("rows");
+  const rowEls = TASKS.map((id, i) => {
+    const y = ROW_Y(i);
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("class", "rowg hidden");
+    g.innerHTML =
+      `<rect class="row" x="346" y="${y}" width="268" height="46" rx="6"/>` +
+      `<text class="t-mono" x="360" y="${y + 20}">${id}</text>` +
+      `<text class="t-mono-muted" data-k="note" x="360" y="${y + 36}"></text>` +
+      `<text class="t-mono-muted" data-k="owner" x="508" y="${y + 20}" text-anchor="end"></text>` +
+      `<rect class="pill" data-k="pill" x="518" y="${y + 12}" width="88" height="22" rx="11"/>` +
+      `<text class="pill-text" data-k="ptxt" x="562" y="${y + 27}" text-anchor="middle"></text>`;
+    rowsG.appendChild(g);
+    const q = (k) => g.querySelector(`[data-k="${k}"]`);
+    return { g, note: q("note"), owner: q("owner"), pill: q("pill"), ptxt: q("ptxt"), last: null, changedAt: -1e9 };
+  });
+
+  // ---- steps list
+  const stepsOl = $("steps");
+  const stepBtns = STEPS.map((s, i) => {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = `<span class="n">${String(i + 1).padStart(2, "0")}</span><span></span>`;
+    b.lastChild.textContent = s.text;
+    b.addEventListener("click", () => { seek(s.t); setPlaying(true); });
+    li.appendChild(b); stepsOl.appendChild(li);
+    return b;
+  });
+
+  // ---- state
+  let S, logLines, packets, fired, simT;
+  function freshState() {
+    S = {
+      rows: TASKS.map(() => ({ visible: false, status: "PENDING", owner: "", note: "" })),
+      workers: { A: { state: "listening", task: -1 }, B: { state: "listening", task: -1 } },
+      results: 0, stop: false, step: -1,
+    };
+    logLines = []; fired = 0; simT = 0;
+    packets = []; $("packets").textContent = "";
+  }
+
+  function log(msg) {
+    logLines.push(`t+${simT.toFixed(1).padStart(4, "0")}s  ${msg}`);
+    if (logLines.length > 14) logLines.shift();
+  }
+
+  function packet(pathId, status, instant) {
+    if (instant || reduced) return;
+    const path = $(pathId);
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("r", "6");
+    c.setAttribute("class", "packet s-" + status);
+    $("packets").appendChild(c);
+    packets.push({ path, len: path.getTotalLength(), start: simT, dur: (pathId.startsWith("p-r") ? 1.0 : 0.55) * SLOW, el: c });
+  }
+
+  // ---- actions
+  const A = {
+    add(i, inst) { S.rows[i].visible = true; S.rows[i].status = "PENDING"; packet("p-mq", "PENDING", inst); log(`${TASKS[i].padEnd(10)} PENDING   task.md written`); },
+    claim(w, i, inst) { Object.assign(S.rows[i], { status: "RUNNING", owner: "worker " + w, note: "claimed (lock)" }); S.workers[w] = { state: "busy", task: i }; packet("p-q" + w, "RUNNING", inst); log(`${TASKS[i].padEnd(10)} RUNNING   claimed by worker ${w}`); },
+    ask(w, i, cmd, inst) { Object.assign(S.rows[i], { status: "AWAITING", note: "announce: " + cmd }); log(`${TASKS[i].padEnd(10)} AWAITING  ${cmd}`); },
+    run(w, i, inst) { Object.assign(S.rows[i], { status: "RUNNING", note: "working" }); log(`${TASKS[i].padEnd(10)} RUNNING`); },
+    done(w, i, inst) { Object.assign(S.rows[i], { status: "DONE", note: "result.md written" }); S.workers[w] = { state: "listening", task: -1 }; S.results++; packet("p-r" + w, "DONE", inst); log(`${TASKS[i].padEnd(10)} DONE      by worker ${w}`); },
+    fail(w, i, msg, inst) { Object.assign(S.rows[i], { status: "ERROR", note: msg }); S.workers[w] = { state: "listening", task: -1 }; S.results++; packet("p-r" + w, "ERROR", inst); log(`${TASKS[i].padEnd(10)} ERROR     ${msg}`); },
+    stop(inst) { S.stop = true; packet("p-mq", "ERROR", inst); log(`.stop      created by master`); },
+    stopped(w) { S.workers[w] = { state: "stopped", task: -1 }; log(`worker ${w}   loop stopped (exit 4)`); },
+  };
+
+  const EVENTS_RAW = [
+    [0.3, (i) => A.add(0, i)], [0.7, (i) => A.add(1, i)], [1.1, (i) => A.add(2, i)], [1.5, (i) => A.add(3, i)], [1.9, (i) => A.add(4, i)],
+    [2.6, (i) => A.claim("A", 0, i)], [2.9, (i) => A.claim("B", 1, i)],
+    [4.0, (i) => A.ask("A", 0, "sleep 5", i)], [4.3, (i) => A.ask("B", 1, "wc -w", i)],
+    [5.6, (i) => A.run("A", 0, i)], [5.9, (i) => A.run("B", 1, i)],
+    [7.0, (i) => A.done("A", 0, i)], [7.4, (i) => A.done("B", 1, i)],
+    [8.0, (i) => A.claim("A", 2, i)], [8.3, (i) => A.claim("B", 3, i)],
+    [9.0, (i) => A.ask("B", 3, "write out/p-write.txt", i)], [9.8, (i) => A.run("B", 3, i)],
+    [10.2, (i) => A.done("A", 2, i)], [10.8, (i) => A.done("B", 3, i)],
+    [11.2, (i) => A.claim("A", 4, i)],
+    [12.6, (i) => A.fail("A", 4, "file not found", i)],
+    [14.0, (i) => A.stop(i)], [14.7, () => A.stopped("A")], [14.9, () => A.stopped("B")],
+  ];
+  const EVENTS = EVENTS_RAW.map(([t, f]) => [t * SLOW, f]);
+
+  // ---- render
+  function render(animate = true) {
+    S.rows.forEach((r, i) => {
+      const el = rowEls[i];
+      const key = r.visible ? r.status : null;
+      if (key !== el.last) {
+        el.changedAt = animate && key ? simT : -1e9;
+        el.last = key;
+      }
+      const hot = !reduced && simT - el.changedAt < HOT;
+      el.g.setAttribute("class", "rowg" + (r.visible ? "" : " hidden") + (hot ? " hot h-" + r.status : ""));
+      el.pill.setAttribute("class", "pill s-" + r.status);
+      el.ptxt.textContent = r.status;
+      el.owner.textContent = r.owner;
+      el.note.textContent = r.note;
+    });
+    for (const w of ["A", "B"]) {
+      const st = S.workers[w];
+      const dot = $(w + "-dot"), txt = $(w + "-txt"), node = $("n-" + w);
+      if (st.state === "busy") {
+        const r = S.rows[st.task];
+        dot.setAttribute("class", "s-" + r.status);
+        txt.textContent = TASKS[st.task];
+        node.setAttribute("class", "node busy");
+      } else if (st.state === "stopped") {
+        dot.setAttribute("class", "s-STOP"); txt.textContent = "loop stopped"; node.setAttribute("class", "node stopped");
+      } else {
+        dot.setAttribute("class", "s-IDLE pulse"); txt.textContent = "listening"; node.setAttribute("class", "node");
+      }
+    }
+    const waiting = S.rows.filter((r) => r.visible && !["DONE", "ERROR"].includes(r.status)).length;
+    $("watch-dot").setAttribute("class", waiting ? "s-RUNNING pulse" : "s-IDLE");
+    $("watch-txt").textContent = waiting ? `watching ${waiting} task${waiting > 1 ? "s" : ""}` : "relay-watch.sh idle";
+    $("res-txt").textContent = `results read: ${S.results}`;
+    $("stop-chip").setAttribute("visibility", S.stop ? "visible" : "hidden");
+    $("log").textContent = logLines.join("\n");
+    $("clock").textContent = `t+${simT.toFixed(1).padStart(4, "0")}s`;
+    let step = -1; STEPS.forEach((s, i) => { if (simT >= s.t) step = i; });
+    if (step !== S.step) {
+      S.step = step;
+      $("caption").textContent = step >= 0 ? `${step + 1} · ${STEPS[step].text}` : "Starting…";
+      stepBtns.forEach((b, i) => i === step ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current"));
+    }
+  }
+
+  function advance(to, instant) {
+    while (fired < EVENTS.length && EVENTS[fired][0] <= to) {
+      const keep = simT; simT = EVENTS[fired][0];
+      EVENTS[fired][1](instant); fired++;
+      if (!instant) simT = keep;
+    }
+    simT = to;
+  }
+
+  function seek(t) { freshState(); advance(t, true); render(false); }
+
+  // ---- loop
+  let playing = true, speed = 1, last = null;
+  function setPlaying(p) { playing = p; $("play").textContent = p ? "Pause" : "Play"; last = null; }
+  function frame(now) {
+    if (last == null) last = now;
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing) {
+      const to = simT + dt * speed;
+      if (to >= END) { seek(0); }
+      else { advance(to, false); }
+      packets = packets.filter((p) => {
+        const k = (simT - p.start) / p.dur;
+        if (k >= 1) { p.el.remove(); return false; }
+        const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        const pt = p.path.getPointAtLength(e * p.len);
+        p.el.setAttribute("cx", pt.x); p.el.setAttribute("cy", pt.y);
+        return true;
+      });
+      render();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  $("play").addEventListener("click", () => setPlaying(!playing));
+  $("restart").addEventListener("click", () => { seek(0); setPlaying(true); });
+  $("speed").addEventListener("click", () => {
+    speed = speed === 1 ? 2 : speed === 2 ? 0.5 : 1;
+    $("speed").textContent = `Speed ${speed === 0.5 ? "½" : speed}×`;
+  });
+
+  seek(4.5 * SLOW);    // open mid-run so the first frame already shows the flow
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

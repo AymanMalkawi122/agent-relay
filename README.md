@@ -37,6 +37,12 @@ So it pays off most on **big input, small output** tasks:
 
 Copilot's answers are another model's answers — spot-check what matters.
 
+## See it run
+
+[`docs/index.html`](docs/index.html) is an animated diagram of one full run:
+two workers sharing a queue, an approval announcement, an `ERROR`, and the
+stop signal. Open it in a browser. It's a single file with no build step.
+
 ## How it works
 
 ```
