@@ -1,0 +1,14 @@
+---
+description: Start the agent-relay worker loop — listen for tasks from Claude Code and run them until told to stop
+agent: agent
+---
+
+- `<workspace>` = `{{WORKSPACE}}`
+- `S` = `{{SKILL_DIR}}/scripts`
+
+These paths may contain spaces, so always wrap them in double quotes in
+shell commands, e.g.
+`cd "{{WORKSPACE}}" && "{{SKILL_DIR}}/scripts/relay-listen.sh" --timeout 300`.
+
+Read [WORKER.md](<{{SKILL_DIR}}/WORKER.md>) and follow it exactly, starting
+the loop now. Keep looping until `relay-listen.sh` exits 4.
